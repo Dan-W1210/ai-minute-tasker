@@ -6,13 +6,16 @@ import type { AnalysisResult } from "@/lib/types";
 // Anthropic SDK は Node ランタイムが必要（Edge では動かない）
 export const runtime = "nodejs";
 
+/** AI に必ず呼ばせるツール名（JSON出力の入口） */
+const TOOL_NAME = "record_minutes";
+
 /**
- * AI に返させる JSON の形（Structured Outputs）。
- * このスキーマに一致した JSON が必ず返るため、フロントで安全にパースできる。
- * 注: json_schema では minItems/maxItems などの制約は使えないため、
+ * AI に返させる JSON の形。ツールの input_schema として渡し、
+ * tool_choice でこのツールを強制することで、必ずスキーマ準拠の構造化データが返る。
+ * 注: input_schema では minItems/maxItems などの制約は使えないため、
  *     「要約は3行」といった要件はプロンプト側で指示する。
  */
-const ANALYSIS_SCHEMA = {
+const ANALYSIS_SCHEMA: Anthropic.Tool.InputSchema = {
   type: "object",
   properties: {
     summary: {
@@ -43,7 +46,7 @@ const ANALYSIS_SCHEMA = {
   },
   required: ["summary", "decisions", "actions"],
   additionalProperties: false,
-} as const;
+};
 
 const SYSTEM_PROMPT = `あなたは優秀なビジネスアシスタントです。提供された会議の文字起こしデータから、議事録を構造化して抽出してください。
 
@@ -89,9 +92,15 @@ export async function POST(req: NextRequest) {
       model: MODEL,
       max_tokens: 4096,
       system: SYSTEM_PROMPT,
-      output_config: {
-        format: { type: "json_schema", schema: ANALYSIS_SCHEMA },
-      },
+      tools: [
+        {
+          name: TOOL_NAME,
+          description: "会議の議事録を構造化データとして記録する。",
+          input_schema: ANALYSIS_SCHEMA,
+        },
+      ],
+      // 上記ツールの呼び出しを強制 → 応答は必ずスキーマ準拠の tool_use になる
+      tool_choice: { type: "tool", name: TOOL_NAME },
       messages: [
         {
           role: "user",
@@ -100,16 +109,16 @@ export async function POST(req: NextRequest) {
       ],
     });
 
-    // output_config.format により、最初の text ブロックは必ずスキーマ準拠の JSON
-    const textBlock = response.content.find((b) => b.type === "text");
-    if (!textBlock || textBlock.type !== "text") {
+    // tool_choice で強制したため、tool_use ブロックの input がスキーマ準拠の構造化データ
+    const toolUse = response.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") {
       return NextResponse.json(
         { error: "AIから有効な応答が得られませんでした。" },
         { status: 502 },
       );
     }
 
-    const result = JSON.parse(textBlock.text) as AnalysisResult;
+    const result = toolUse.input as AnalysisResult;
     return NextResponse.json(result);
   } catch (err) {
     // SDK の型付き例外でユーザー向けメッセージに変換
