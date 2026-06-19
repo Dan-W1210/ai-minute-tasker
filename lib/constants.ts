@@ -1,8 +1,8 @@
 /** localStorage に APIキーを保存するキー名 */
-export const API_KEY_STORAGE_KEY = "ai-minute-tasker:anthropic-api-key";
+export const API_KEY_STORAGE_KEY = "anthropic_api_key";
 
 /** フロント → Route Handler へユーザーのAPIキーを渡すヘッダー名 */
-export const API_KEY_HEADER = "x-user-api-key";
+export const API_KEY_HEADER = "x-api-key";
 
 /** 使用する Claude モデル */
-export const MODEL = "claude-opus-4-8";
+export const MODEL = "claude-sonnet-4-6";

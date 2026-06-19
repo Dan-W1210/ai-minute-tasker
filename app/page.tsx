@@ -46,14 +46,26 @@ export default function Home() {
         body: JSON.stringify({ transcript }),
       });
 
+      // 非JSON応答でも落ちないよう text → JSON.parse を try/catch で保護
+      const raw = await res.text();
+      const parsed = safeJsonParse(raw);
+
       if (!res.ok) {
-        const err = (await res.json()) as ApiError;
-        showToast(err.error ?? "分析に失敗しました", "error");
+        const message =
+          (parsed as ApiError | null)?.error ?? "分析に失敗しました";
+        // 401（キー無効）の場合は設定を開いて再入力を促す
+        if (res.status === 401) setSettingsOpen(true);
+        showToast(message, "error");
         return;
       }
 
-      const data = (await res.json()) as AnalysisResult;
-      setResult(data);
+      if (!parsed) {
+        showToast("AIの応答を解釈できませんでした。再試行してください。", "error");
+        return;
+      }
+
+      // 配列欠損などの不正形状でも UI が壊れないよう正規化
+      setResult(normalizeResult(parsed));
       showToast("分析が完了しました", "success");
     } catch {
       showToast("ネットワークエラーが発生しました", "error");
@@ -154,6 +166,38 @@ export default function Home() {
       <Toast toast={toast} onClose={() => setToast(null)} />
     </main>
   );
+}
+
+/** 失敗しても例外を投げず null を返す JSON パーサ */
+function safeJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** AIの応答を AnalysisResult 形に正規化（欠損・型不一致でも安全な既定値に） */
+function normalizeResult(data: unknown): AnalysisResult {
+  const obj = (data ?? {}) as Record<string, unknown>;
+  const toStringArray = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
+  const actions = Array.isArray(obj.actions)
+    ? obj.actions
+        .filter((a): a is Record<string, unknown> => typeof a === "object" && a !== null)
+        .map((a) => ({
+          task: typeof a.task === "string" ? a.task : "",
+          assignee: typeof a.assignee === "string" ? a.assignee : "未定",
+          due: typeof a.due === "string" ? a.due : "未定",
+        }))
+    : [];
+
+  return {
+    summary: toStringArray(obj.summary),
+    decisions: toStringArray(obj.decisions),
+    actions,
+  };
 }
 
 function GearIcon() {
